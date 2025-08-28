@@ -105,7 +105,7 @@ module Argonaut
         sl = str.length
         i = 0
         while sl > i
-          __failed "Expected '#{str[i]}', got '#{@c&.chr || "EOF"}' (in \"#{str}\" literal)" if @c != str.getbyte(i)
+          __failed "Expected '#{str[i]}', got '#{@c&.chr || "EOF"}' (in \"#{str}\" literal)" unless @c == str.getbyte(i)
 
           __advance
           i += 1
@@ -443,17 +443,24 @@ module Argonaut
         space_in_empty: true,
         **kw
       )
-        raise JSONKeyError, "Not all keys are instances of `String` or `Symbol`" if !keys.all? {
-                                                                                      String === _1 || Symbol === _1
-                                                                                    }
+        # raise JSONKeyError, "Not all keys are instances of `String` or `Symbol`" if !keys.all? {
+        #                                                                               String === _1 || Symbol === _1
+        #                                                                             }
 
         space_in_empty &&= !minify
 
-        return "{#{space_in_empty ? " " : ""}}" if self.empty?
+        return space_in_empty ? "{ }" : "{}" if self.empty?
 
-        space = minify ? "" : " "
-        pairs = self.map { |k, v|
-          "#{k.to_json(**kw, extensions: false)}:#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_size: indent_size,
+        space = minify ? ":" : ": "
+        pairs = self.filter_map { |k, v|
+          unless String === k || Symbol === k
+            if $__argo_drjson_strict_mode
+              raise JSONKeyError, "`Hash` contains keys of non-string-coercible types (#{self})"
+            else
+              next
+            end
+          end
+          "#{k.to_json(**kw, extensions: false)}#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_size: indent_size,
                                                                minify: minify, space_in_empty: space_in_empty, **kw)}"
         }
 
@@ -477,7 +484,7 @@ module Argonaut
       )
         space_in_empty &&= !minify
 
-        return "[#{space_in_empty ? " " : ""}]" if self.empty?
+        return space_in_empty ? "[ ]" : "[]" if self.empty?
 
         values = self.map { |v|
           v.to_json(
@@ -539,7 +546,7 @@ module Argonaut
         ei = 0
         l = self.length
 
-        if kw[:symbol_string_ext] && self[0].ord == 0x3a
+        if kw[:symbol_string_ext] && self.getbyte(0) == 0x3a
           acc << "\\u003a"
           bi = 1
           ei = 1
