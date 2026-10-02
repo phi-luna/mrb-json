@@ -73,6 +73,7 @@ module Argonaut
         @symbolize_keys = symbolize_keys
         @symbol_string_ext = symbol_string_ext
         @kw = kw
+        @extensions = kw[:extensions]
       end
 
       def __failed(msg)
@@ -115,7 +116,11 @@ module Argonaut
       end
 
       def __skip_ws
-        __advance while @c == 0x20 || @c == 0x0A || @c == 0x09 || @c == 0x0D
+        c = @c
+        (c = @str.getbyte(@idx += 1)) while c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D
+
+        __failed "Unexpected EOF" unless c
+        @c = c
       end
 
       def __parse_array
@@ -152,7 +157,7 @@ module Argonaut
 
           __expectb!(0x7d) # 0x7d is closing curly brace
 
-          hash = __handle_parser_extensions(hash)
+          hash = @extensions ? __handle_parser_extensions(hash) : hash
         end
 
         return hash
@@ -192,7 +197,7 @@ module Argonaut
 
       def __parse_value
         __failed "Unexpected EOF" unless @c
-        send(MAGIC_DISPATCH_TABLE[@c])
+        __send__(MAGIC_DISPATCH_TABLE[@c])
       end
 
       def __parse_number
@@ -269,7 +274,9 @@ module Argonaut
 
       def __read_characters(str)
         start = @idx
-        __advance until STRING_CHARS_END_TABLE[@c || 0x100]
+        c = @c
+        (c = @str.getbyte(@idx += 1)) until STRING_CHARS_END_TABLE[c || 0x100]
+        @c = c
 
         __failed("unexpected #{@c&.chr&.inspect || "EOF"} in string literal") if STRING_CHARS_ERROR_TABLE[@c || 0x100]
 
@@ -456,12 +463,14 @@ module Argonaut
           unless String === k || Symbol === k
             if $__argo_drjson_strict_mode
               raise JSONKeyError, "`Hash` contains keys of non-string-coercible types (#{self})"
-            else
-              next
             end
+
+            next
+
           end
-          "#{k.to_json(**kw, extensions: false)}#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_size: indent_size,
-                                                               minify: minify, space_in_empty: space_in_empty, **kw)}"
+          "#{k.to_json(**kw,
+extensions: false)}#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_size: indent_size,
+                                       minify: minify, space_in_empty: space_in_empty, **kw)}"
         }
 
         if minify
@@ -551,7 +560,7 @@ module Argonaut
           bi = 1
           ei = 1
         end
-        
+
         while ei < l
           cc = getbyte(ei)
           needs_escaping_v = cc == 0x22 || cc == 0x5c
