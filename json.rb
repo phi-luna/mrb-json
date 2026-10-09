@@ -72,6 +72,11 @@ module Argonaut
 
         @dt = MAGIC_DISPATCH_TABLE
         @et = STRING_CHARS_END_TABLE
+
+        @true = "true"
+        @false = "false"
+        @null = "null"
+
         @symbolize_keys = symbolize_keys
         @symbol_string_ext = symbol_string_ext
         @kw = kw
@@ -119,7 +124,9 @@ module Argonaut
 
       def __skip_ws
         c = @c
-        (c = @str.getbyte(@idx += 1)) while c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D
+        idx = @idx
+        (c = @str.getbyte(idx += 1)) while c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D
+        @idx = idx
         @c = c
       end
 
@@ -129,11 +136,12 @@ module Argonaut
 
         array = []
 
-        unless __matchb!(0x5d) # 0x5d is closing square bracket
+        unless @c == 0x5d && (@c = @str.getbyte(@idx += 1)) # 0x5d is closing square bracket
           while true
-            array << __parse_element
             __skip_ws
-            break unless __matchb!(0x2c) # 0x2c is comma
+            array << __send__(@dt[@c])
+            __skip_ws
+            break unless @c == 0x2c && (@c = @str.getbyte(@idx += 1)) # 0x2c is comma
           end
 
           __expectb!(0x5d) # 0x5d is closing square bracket
@@ -148,11 +156,18 @@ module Argonaut
 
         hash = {}
 
-        unless __matchb!(0x7d) # 0x7d is closing curly brace
+        unless @c == 0x7d && (@c = @str.getbyte(@idx += 1)) # 0x7d is closing curly brace
           while true
-            __parse_member(hash)
             __skip_ws
-            break unless __matchb!(0x2c) # 0x2c is comma
+            key = __parse_string
+            key = key.to_sym if @symbolize_keys
+            __skip_ws
+            __expectb!(0x3a) # 0x3a is colon
+            __skip_ws
+            hash[key] = __parse_value
+
+            __skip_ws
+            break unless @c == 0x2c && (@c = @str.getbyte(@idx += 1)) # 0x2c is comma
           end
 
           __expectb!(0x7d) # 0x7d is closing curly brace
@@ -181,17 +196,17 @@ module Argonaut
       end
 
       def __parse_null
-        __string("null")
+        __string(@null)
         return nil
       end
 
       def __parse_true
-        __string("true")
+        __string(@true)
         return true
       end
 
       def __parse_false
-        __string("false")
+        __string(@false)
         return false
       end
 
@@ -375,18 +390,6 @@ module Argonaut
         str = __parse_characters
         __expectb!(0x22) # 0x22 is double quote
         return str
-      end
-
-      def __parse_member(hash)
-        __skip_ws
-        key = __parse_string
-        key = key.to_sym if @symbolize_keys
-        __skip_ws
-        __expectb!(0x3a) # 0x3a is colon
-        __skip_ws
-        hash[key] = __parse_value
-
-        return nil
       end
 
       def __handle_symbol_extension(hsh)
