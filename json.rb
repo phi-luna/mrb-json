@@ -70,6 +70,8 @@ module Argonaut
         @idx = 0
         @c = string.getbyte(0)
 
+        @dt = MAGIC_DISPATCH_TABLE
+        @et = STRING_CHARS_END_TABLE
         @symbolize_keys = symbolize_keys
         @symbol_string_ext = symbol_string_ext
         @kw = kw
@@ -118,8 +120,6 @@ module Argonaut
       def __skip_ws
         c = @c
         (c = @str.getbyte(@idx += 1)) while c == 0x20 || c == 0x0A || c == 0x09 || c == 0x0D
-
-        __failed "Unexpected EOF" unless c
         @c = c
       end
 
@@ -197,15 +197,25 @@ module Argonaut
 
       def __parse_value
         __failed "Unexpected EOF" unless @c
-        __send__(MAGIC_DISPATCH_TABLE[@c])
+        __send__(@dt[@c])
       end
 
       def __parse_number
         start = @idx
-        __read_integer || __failed("Expected the integer part of a numeric literal, got '#{@c&.chr || "EOF"}'")
+        (
+          @c == 0x2d && @c = @str.getbyte(@idx += 1) # 0x2d is minus
+          __read_onenine_digits || __read_digit
+        ) || __failed("Expected the integer part of a numeric literal, got '#{@c&.chr || "EOF"}'")
         iend = @idx
 
-        __read_frac || __failed("Expected nothing or the fractional part of a numeric literal, got '#{@c&.chr || "EOF"}'")
+        (
+          # 0x2e == '.'
+          @c != 0x2e || (
+            @c = @str.getbyte(@idx += 1)
+            __read_some_digits
+          )
+        ) || __failed("Expected nothing or the fractional part of a numeric literal, got '#{@c&.chr || "EOF"}'")
+
         __read_exp || __failed("Expected nothing or the exponent part of a numeric literal, got '#{@c&.chr || "EOF"}'")
         nend = @idx
 
@@ -214,21 +224,6 @@ module Argonaut
         else
           @str[start...nend].to_f
         end
-      end
-
-      def __read_unsigned_integer
-        __read_onenine_digits || __read_digit
-      end
-
-      def __read_integer
-        __matchb!(0x2d) # 0x2d is minus
-        __read_unsigned_integer
-      end
-
-      def __read_frac
-        return true unless __matchb!(0x2e) # 0x2e is period
-
-        __read_some_digits
       end
 
       def __read_exp
@@ -240,11 +235,11 @@ module Argonaut
       end
 
       def __read_sign
-        __advance if @c == 0x2b || @c == 0x2d # 0x2b is plus, 0x2d is minus
+        @c = @str.getbyte(@idx += 1) if @c == 0x2b || @c == 0x2d # 0x2b is plus, 0x2d is minus
       end
 
       def __read_digit
-        __advance if @c && @c >= 0x30 && @c <= 0x39 # 0-9
+        __advance if @c && @c >= 0x30 && @c <= 0x39
       end
 
       def __read_onenine
@@ -252,15 +247,27 @@ module Argonaut
       end
 
       def __read_onenine_digits
-        __read_many_digits if __read_onenine
+        return unless __read_onenine
+
+        c = @c
+        nil while ((c = @str.getbyte(@idx += 1)) if c && c >= 0x30 && c <= 0x39) # 0-9
+        @c = c
+        true
       end
 
       def __read_some_digits
-        __read_many_digits if __read_digit
+        return unless __read_digit
+
+        c = @c
+        nil while ((c = @str.getbyte(@idx += 1)) if c && c >= 0x30 && c <= 0x39) # 0-9
+        @c = c
+        true
       end
 
       def __read_many_digits
-        nil while __read_digit
+        c = @c
+        nil while ((c = @str.getbyte(@idx += 1)) if c && c >= 0x30 && c <= 0x39) # 0-9
+        @c = c
         return true
       end
 
@@ -275,7 +282,7 @@ module Argonaut
       def __read_characters(str)
         start = @idx
         c = @c
-        (c = @str.getbyte(@idx += 1)) until STRING_CHARS_END_TABLE[c || 0x100]
+        (c = @str.getbyte(@idx += 1)) until @et[c || 0x100]
         @c = c
 
         __failed("unexpected #{@c&.chr&.inspect || "EOF"} in string literal") if STRING_CHARS_ERROR_TABLE[@c || 0x100]
@@ -288,8 +295,8 @@ module Argonaut
 
       def __readexpect_hexdigit
         c = @c
-        ((isnum   = c >= 0x30 && c <= 0x39)  ||
-         (isupper = c >= 0x41 && c <= 0x46)  ||
+        ((isnum   = c >= 0x30 && c <= 0x39) ||
+         (isupper = c >= 0x41 && c <= 0x46) ||
          (c >= 0x61 && c <= 0x66)) ||
           __failed("expected hex digit [0-9a-fA-F] got #{@c&.chr&.inspect || "EOF"}")
         __advance
@@ -345,7 +352,7 @@ module Argonaut
             cp2 = cp2 * 0x10 + __readexpect_hexdigit
             cp2 = cp2 * 0x10 + __readexpect_hexdigit
 
-            __failed("low surrogate not in low surrogate range") unless cp2 >= 0xdc00 && cp2 <= 0xdfff
+            __failed("low surrogate not in low surrogate range") unless cp2 >= 0xdc00 && cp2 <= 0xdfff # rubocop:disable Style/InvertibleUnlessCondition
 
             cp  &= 0x3ff
             cp2 &= 0x3ff
@@ -628,9 +635,11 @@ extensions: false)}#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_si
     end
   end
 
-  class ::GTK::Runtime
-    def write_json(filename, hash_or_array, indent_size = 4, **kw)
-      write_file(filename, hash_or_array.to_json(indent_size: indent_size, minify: indent_size == -1, **kw))
+  if Object.const_defined?(:GTK)
+    class ::GTK::Runtime
+      def write_json(filename, hash_or_array, indent_size = 4, **kw)
+        write_file(filename, hash_or_array.to_json(indent_size: indent_size, minify: indent_size == -1, **kw))
+      end
     end
   end
 end

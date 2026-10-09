@@ -1,6 +1,10 @@
 require "json"
 
+alias puts_immediate __puts__ unless respond_to?(:puts_immediate)
+
 json = $gtk.read_file("crimes.json")
+
+N = 10
 
 def benchmark
   GC.start
@@ -9,24 +13,24 @@ def benchmark
   (Time.now - start) * 1000
 end
 
-puts_immediate "Parsing `test/crimes.json` 20 times…"
-
-threshhold = 20.map do
+threshhold = N.map {
   i = 0
   n = json.size
 
-  benchmark do
+  benchmark {
     while i < n
       json.getbyte(i)
       i += 1
     end
-  end
-end
+  }
+}
 puts_immediate "Threshhold Time: #{threshhold.min.to_sf}ms"
 
-data = 20.map { benchmark { Argonaut::JSON.parse(json) } }
+puts_immediate "Parsing `test/crimes.json` #{N} times…"
+
+data = N.map { benchmark { Argonaut::JSON.parse(json, extensions: true) } }
 mean = data.sum / data.size
-var = data.map { |time| (time - mean) ** 2 }.sum / data.size
+var = data.map { |time| (time - mean)**2 }.sum / data.size
 puts_immediate "Average Time: #{mean.to_sf}ms ± #{Math.sqrt(var).to_sf}ms"
 puts_immediate "Fastest Time: #{data.min.to_sf}ms"
 puts_immediate "Slowest Time: #{data.max.to_sf}ms"
