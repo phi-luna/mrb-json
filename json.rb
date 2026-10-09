@@ -641,5 +641,5 @@ extensions: false)}#{space}#{v.to_json(indent_depth: indent_depth + 1, indent_si
         write_file(filename, hash_or_array.to_json(indent_size: indent_size, minify: indent_size == -1, **kw))
       end
     end
-  end
+  end if ::Object.const_defined?(:GTK)
 end
